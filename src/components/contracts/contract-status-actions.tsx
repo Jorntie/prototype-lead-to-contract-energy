@@ -138,20 +138,15 @@ export function ContractStatusActions({
   return (
     <>
       <div className="flex items-center gap-2">
-        <Button
-          variant="outline"
-          size="sm"
-          asChild
+        <a
+          href={`/api/quotes/${contract.quoteId}/proposal`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-xs font-medium border border-[var(--input)] bg-[var(--background)] shadow-sm hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)] h-8 px-3"
         >
-          <a
-            href={`/api/quotes/${contract.quoteId}/proposal`}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <FileDown className="h-4 w-4 mr-1" />
-            Download Proposal
-          </a>
-        </Button>
+          <FileDown className="h-4 w-4" />
+          Download Proposal
+        </a>
 
         <DropdownMenu
           trigger={

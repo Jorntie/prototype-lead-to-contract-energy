@@ -163,17 +163,12 @@ export default async function ContractDetailPage({
                                 {line.site?.address ??
                                   `Site ${line.siteId.slice(0, 8)}`}
                               </div>
-                              {line.site?.city && (
-                                <div className="text-xs text-[var(--muted-foreground)]">
-                                  {line.site.city}
-                                </div>
-                              )}
                             </td>
                             <td className="text-right py-2 px-4 tabular-nums">
-                              {formatNumber(line.annualConsumption)}
+                              {formatNumber(line.annualKwh)}
                             </td>
                             <td className="text-right py-2 px-4 tabular-nums">
-                              {line.peakCapacity ?? "—"}
+                              {line.site?.supplyCapacity ?? "—"}
                             </td>
                             <td className="text-right py-2 pl-4 font-medium tabular-nums">
                               {formatCurrency(
@@ -191,7 +186,7 @@ export default async function ContractDetailPage({
                         <td className="text-right py-2 px-4 tabular-nums">
                           {formatNumber(
                             quote.quoteLines.reduce(
-                              (s, l) => s + (l.annualConsumption ?? 0),
+                              (s, l) => s + (l.annualKwh ?? 0),
                               0
                             )
                           )}

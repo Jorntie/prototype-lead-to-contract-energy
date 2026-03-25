@@ -167,11 +167,28 @@ export async function updateContract(
   return contract;
 }
 
+const VALID_CONTRACT_TRANSITIONS: Record<string, string[]> = {
+  DRAFT: ["SENT", "TERMINATED"],
+  SENT: ["SIGNED", "TERMINATED"],
+  SIGNED: ["ACTIVE", "TERMINATED"],
+  ACTIVE: ["EXPIRED", "TERMINATED"],
+  EXPIRED: [],
+  TERMINATED: [],
+};
+
 export async function updateContractStatus(
   id: string,
   input: UpdateContractStatusInput,
   userId: string
 ) {
+  const existing = await prisma.contract.findFirstOrThrow({ where: { id } });
+  const allowed = VALID_CONTRACT_TRANSITIONS[existing.status] ?? [];
+  if (!allowed.includes(input.status)) {
+    throw new Error(
+      `Invalid transition: ${existing.status} → ${input.status}`
+    );
+  }
+
   const data: Record<string, unknown> = { status: input.status };
   if (input.status === "SIGNED" && input.signedDate) {
     data.signedDate =

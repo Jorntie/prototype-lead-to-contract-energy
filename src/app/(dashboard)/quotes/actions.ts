@@ -12,6 +12,19 @@ import * as quoteService from "@/lib/services/quote.service";
 export type ActionResult = { success: true; id?: string } | { success: false; error: string };
 
 // ---------------------------------------------------------------------------
+// Horizontal authorization
+// SALES_REP may only mutate quotes they created; managers/admins have full access.
+// ---------------------------------------------------------------------------
+
+async function assertQuoteAccess(quoteId: string, userId: string, role: string) {
+  if (role === "ADMIN" || role === "SALES_MANAGER") return;
+  const quote = await quoteService.getQuote(quoteId);
+  if (!quote || quote.createdById !== userId) {
+    throw new Error("Forbidden: You can only modify quotes you created");
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Create / Update
 // ---------------------------------------------------------------------------
 
@@ -49,6 +62,7 @@ export async function updateQuoteTermsAction(
 ): Promise<ActionResult> {
   try {
     const user = await requireAuth();
+    await assertQuoteAccess(id, user.id, user.role);
     const raw = Object.fromEntries(formData.entries());
 
     const parsed = updateQuoteSchema.safeParse({
@@ -89,6 +103,7 @@ export async function updateComponentValueAction(
 ): Promise<ActionResult> {
   try {
     const user = await requireAuth();
+    await assertQuoteAccess(quoteId, user.id, user.role);
 
     if (typeof value !== "number" || value < 0) {
       return { success: false, error: "Value must be a non-negative number" };
@@ -113,18 +128,20 @@ export async function bulkUpdateComponentAction(
 ): Promise<ActionResult> {
   try {
     const user = await requireAuth();
+    await assertQuoteAccess(quoteId, user.id, user.role);
 
-    // Fetch the current unit for this component from the first site's component
-    // The unit is passed as part of the existing record; value update keeps same unit
+    // unit is ignored by the service — the existing component's unit is preserved
     const parsed = bulkUpdateComponentSchema.safeParse({
       siteIds,
       componentTypeId,
       value,
-      unit: "PER_KWH", // placeholder — actual unit resolved from existing record in service
+      unit: "PER_KWH",
     });
 
-    // We'll let the service resolve the actual unit from the existing component record.
-    // Pass the data directly since the service reads the current unit.
+    if (!parsed.success) {
+      return { success: false, error: "Invalid bulk update data" };
+    }
+
     await quoteService.bulkUpdateComponent(
       quoteId,
       { siteIds, componentTypeId, value, unit: "PER_KWH" },
@@ -305,6 +322,7 @@ export async function cloneQuoteAction(
 export async function deleteQuoteAction(quoteId: string): Promise<ActionResult> {
   try {
     const user = await requireAuth();
+    await assertQuoteAccess(quoteId, user.id, user.role);
     await quoteService.deleteQuote(quoteId, user.id);
     revalidatePath("/quotes");
     return { success: true };

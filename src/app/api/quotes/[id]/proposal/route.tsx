@@ -9,6 +9,7 @@ import {
   renderToBuffer,
 } from "@react-pdf/renderer";
 import { getQuote } from "@/lib/services/quote.service";
+import { auth } from "@/lib/auth";
 
 const styles = StyleSheet.create({
   page: {
@@ -187,7 +188,7 @@ function ProposalDocument({ quote, accountName }: ProposalDocProps) {
   const currency = quote.currency ?? "EUR";
   const quoteLines = quote.quoteLines ?? [];
   const totalKwh = quoteLines.reduce(
-    (s, l) => s + (l.annualConsumption ?? 0),
+    (s, l) => s + (l.annualKwh ?? 0),
     0
   );
 
@@ -262,13 +263,12 @@ function ProposalDocument({ quote, accountName }: ProposalDocProps) {
               <View style={styles.tableRow}>
                 <Text style={styles.colSite}>
                   {line.site?.address ?? "Unknown"}
-                  {line.site?.city ? `, ${line.site.city}` : ""}
                 </Text>
                 <Text style={styles.colKwh}>
-                  {formatNumber(line.annualConsumption)}
+                  {formatNumber(line.annualKwh)}
                 </Text>
                 <Text style={styles.colKw}>
-                  {line.peakCapacity ?? "—"}
+                  {line.site?.supplyCapacity ?? "—"}
                 </Text>
                 <Text
                   style={[
@@ -288,8 +288,8 @@ function ProposalDocument({ quote, accountName }: ProposalDocProps) {
                       {comp.componentType?.name ?? "Component"}
                     </Text>
                     <Text style={styles.componentUnit}>
-                      {comp.unitPrice != null
-                        ? `${comp.unitPrice} ${comp.componentType?.unit === "PER_KWH" ? "€/kWh" : comp.componentType?.unit === "PER_KW_MONTH" ? "€/kW/mo" : comp.componentType?.unit === "PER_METER_MONTH" ? "€/meter/mo" : "€/year"}`
+                      {comp.value != null
+                        ? `${comp.value} ${comp.componentType?.defaultUnit === "PER_KWH" ? "€/kWh" : comp.componentType?.defaultUnit === "PER_KW_MONTH" ? "€/kW/mo" : comp.componentType?.defaultUnit === "PER_METER_MONTH" ? "€/meter/mo" : "€/year"}`
                         : "—"}
                     </Text>
                     <Text style={styles.componentAmount}>
@@ -382,6 +382,11 @@ export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const session = await auth();
+  if (!session?.user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   try {
     const { id } = await params;
     const quote = await getQuote(id);
@@ -399,7 +404,7 @@ export async function GET(
 
     const filename = `Proposal_${accountName.replace(/[^a-zA-Z0-9]/g, "_")}_v${quote.version}.pdf`;
 
-    return new NextResponse(buffer, {
+    return new NextResponse(new Uint8Array(buffer), {
       headers: {
         "Content-Type": "application/pdf",
         "Content-Disposition": `inline; filename="${filename}"`,

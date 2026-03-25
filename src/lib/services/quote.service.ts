@@ -165,14 +165,6 @@ export async function createQuote(
     throw new Error("No sites linked to this opportunity. Add sites before creating a quote.");
   }
 
-  // Get next version number for this opportunity
-  const latestQuote = await prisma.quote.findFirst({
-    where: { opportunityId: data.opportunityId, deletedAt: null },
-    orderBy: { version: "desc" },
-    select: { version: true },
-  });
-  const nextVersion = (latestQuote?.version ?? 0) + 1;
-
   // Get all active price component types for auto-population
   const componentTypes = await prisma.priceComponentType.findMany({
     where: { isActive: true },
@@ -180,7 +172,15 @@ export async function createQuote(
   });
 
   // Create quote with lines and components in a transaction
+  // Version number is computed inside the transaction to avoid race conditions
   const quote = await prisma.$transaction(async (tx) => {
+    const latestQuote = await tx.quote.findFirst({
+      where: { opportunityId: data.opportunityId, deletedAt: null },
+      orderBy: { version: "desc" },
+      select: { version: true },
+    });
+    const nextVersion = (latestQuote?.version ?? 0) + 1;
+
     const newQuote = await tx.quote.create({
       data: {
         opportunityId: data.opportunityId,
@@ -244,7 +244,7 @@ export async function createQuote(
     entityType: "Quote",
     entityId: quote.id,
     userId,
-    entityName: `v${nextVersion}`,
+    entityName: `v${quote.version}`,
   });
 
   const result = await getQuote(quote.id);
@@ -382,16 +382,17 @@ export async function bulkUpdateComponent(
 
     if (!component) continue;
 
+    // Preserve the component's existing unit — bulk update only changes values
     const annualAmount = calculateComponentAnnualCost(
       data.value,
-      data.unit as "PER_KWH" | "PER_KW_MONTH" | "PER_METER_MONTH" | "FIXED_ANNUAL",
+      component.unit as "PER_KWH" | "PER_KW_MONTH" | "PER_METER_MONTH" | "FIXED_ANNUAL",
       quoteLine.annualKwh,
       quoteLine.site.supplyCapacity
     );
 
     await prisma.quoteLineComponent.update({
       where: { id: component.id },
-      data: { value: data.value, unit: data.unit, annualAmount, isOverride: true },
+      data: { value: data.value, annualAmount, isOverride: true },
     });
   }
 
@@ -825,15 +826,15 @@ export async function createNewVersion(quoteId: string, userId: string): Promise
     },
   });
 
-  // Get next version for this opportunity
-  const latestQuote = await prisma.quote.findFirst({
-    where: { opportunityId: original.opportunityId, deletedAt: null },
-    orderBy: { version: "desc" },
-    select: { version: true },
-  });
-  const nextVersion = (latestQuote?.version ?? 0) + 1;
-
+  // Version number is computed inside the transaction to avoid race conditions
   const newQuote = await prisma.$transaction(async (tx) => {
+    const latestQuote = await tx.quote.findFirst({
+      where: { opportunityId: original.opportunityId, deletedAt: null },
+      orderBy: { version: "desc" },
+      select: { version: true },
+    });
+    const nextVersion = (latestQuote?.version ?? 0) + 1;
+
     // Create new quote header
     const created = await tx.quote.create({
       data: {
@@ -892,7 +893,7 @@ export async function createNewVersion(quoteId: string, userId: string): Promise
     entityType: "Quote",
     entityId: newQuote.id,
     userId,
-    entityName: `v${nextVersion} (from v${original.version})`,
+    entityName: `v${newQuote.version} (from v${original.version})`,
   });
 
   await logStatusChange({
@@ -932,11 +933,18 @@ export async function cloneQuote(
   });
 
   const newQuote = await prisma.$transaction(async (tx) => {
+    const latestForTarget = await tx.quote.findFirst({
+      where: { opportunityId: targetOpportunityId, deletedAt: null },
+      orderBy: { version: "desc" },
+      select: { version: true },
+    });
+    const cloneVersion = (latestForTarget?.version ?? 0) + 1;
+
     const created = await tx.quote.create({
       data: {
         opportunityId: targetOpportunityId,
         accountId: targetOpportunity.accountId,
-        version: 1,
+        version: cloneVersion,
         status: "DRAFT",
         currency: original.currency,
         paymentTerms: original.paymentTerms,
