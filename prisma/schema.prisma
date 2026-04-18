@@ -1,0 +1,374 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+// ============================================================
+// NOTE: SQLite does not support enums, Decimal, arrays, or Json.
+// All enum fields are stored as String with validation in app code.
+// All Decimal fields use Float (sufficient for a prototype).
+// String[] → String (JSON-encoded array).
+// Json? → String? (JSON-encoded object).
+// ============================================================
+
+// Enum value constants (for reference — enforced in application code):
+//
+// UserRole: ADMIN, SALES_MANAGER, SALES_REP
+// LeadStatus: NEW, CONTACTED, QUALIFIED, DISQUALIFIED, CONVERTED
+// AccountCreditStatus: NOT_ASSESSED, LOW_RISK, MEDIUM_RISK, HIGH_RISK
+// Commodity: ELECTRICITY, GAS
+// SiteStatus: ACTIVE, INACTIVE, PENDING_VALIDATION
+// VoltageLevel: HV, MV, LV
+// OpportunityStage: DISCOVERY, QUOTING, PROPOSAL_SENT, NEGOTIATION, WON, LOST
+// QuoteStatus: DRAFT, PENDING_APPROVAL, APPROVED, SENT, ACCEPTED, REJECTED, EXPIRED, SUPERSEDED
+// ContractStatus: DRAFT, SENT, SIGNED, ACTIVE, EXPIRED, TERMINATED
+// ComponentCategory: ENERGY, NETWORK, TAXES_LEVIES, MARGIN, GREEN, SERVICES
+// ComponentUnit: PER_KWH, PER_KW_MONTH, PER_METER_MONTH, FIXED_ANNUAL
+// PaymentTerms: NET_14, NET_30, NET_60
+// BillingFrequency: MONTHLY, QUARTERLY
+// ActivityType: NOTE, CALL, EMAIL, MEETING, STATUS_CHANGE, CREATED, UPDATED, CONVERTED, QUOTE_SUBMITTED, QUOTE_APPROVED, QUOTE_REJECTED, CONTRACT_SIGNED
+// NotificationType: APPROVAL_REQUESTED, APPROVAL_GRANTED, QUOTE_EXPIRING, STAGE_CHANGE
+
+// ============================================================
+// MODELS
+// ============================================================
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  name         String
+  role         String   // UserRole
+  passwordHash String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  assignedLeads         Lead[]        @relation("AssignedLeads")
+  assignedOpportunities Opportunity[] @relation("AssignedOpportunities")
+  createdQuotes         Quote[]       @relation("CreatedQuotes")
+  approvedQuotes        Quote[]       @relation("ApprovedQuotes")
+  activityLogs          ActivityLog[]
+  notifications         Notification[]
+}
+
+model Lead {
+  id                   String    @id @default(uuid())
+  companyName          String
+  contactName          String
+  email                String?
+  phone                String?
+  estimatedSites       Int?
+  estimatedVolume      Float?
+  currentSupplier      String?
+  contractEndDate      DateTime?
+  status               String    @default("NEW") // LeadStatus
+  notes                String?
+  assignedToId         String?
+  convertedToAccountId String?
+  createdById          String?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+  deletedAt            DateTime?
+
+  // Relations
+  assignedTo         User?    @relation("AssignedLeads", fields: [assignedToId], references: [id])
+  convertedToAccount Account? @relation("ConvertedFromLead", fields: [convertedToAccountId], references: [id])
+
+  @@index([status])
+  @@index([assignedToId])
+  @@index([contractEndDate])
+}
+
+model Account {
+  id                String    @id @default(uuid())
+  name              String
+  parentId          String?
+  industry          String?
+  creditStatus      String    @default("NOT_ASSESSED") // AccountCreditStatus
+  currentSupplier   String?
+  contractEndDate   DateTime?
+  createdFromLeadId String?
+  createdById       String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  deletedAt         DateTime?
+
+  // Relations
+  parent             Account?      @relation("AccountHierarchy", fields: [parentId], references: [id])
+  children           Account[]     @relation("AccountHierarchy")
+  contacts           Contact[]
+  sites              Site[]
+  siteGroups         SiteGroup[]
+  opportunities      Opportunity[]
+  quotes             Quote[]       @relation("AccountQuotes")
+  contracts          Contract[]    @relation("AccountContracts")
+  convertedFromLeads Lead[]        @relation("ConvertedFromLead")
+
+  @@index([parentId])
+  @@index([contractEndDate])
+}
+
+model Contact {
+  id        String    @id @default(uuid())
+  accountId String
+  name      String
+  email     String?
+  phone     String?
+  role      String?   // "Decision Maker", "Procurement", "Technical", etc.
+  isPrimary Boolean   @default(false)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  // Relations
+  account Account @relation(fields: [accountId], references: [id])
+
+  @@index([accountId])
+}
+
+model SiteGroup {
+  id          String    @id @default(uuid())
+  accountId   String
+  name        String
+  description String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  // Relations
+  account Account @relation(fields: [accountId], references: [id])
+  sites   Site[]
+
+  @@index([accountId])
+}
+
+model Site {
+  id                String    @id @default(uuid())
+  accountId         String
+  siteGroupId       String?
+  address           String
+  meterId           String?
+  commodity         String    @default("ELECTRICITY") // Commodity
+  supplyCapacity    Float?    // kW
+  annualConsumption Float?    // kWh
+  peakPercentage    Float?    // percentage 0-100
+  voltageLevel      String?   // VoltageLevel
+  connectionType    String?
+  contractEndDate   DateTime?
+  status            String    @default("ACTIVE") // SiteStatus
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  deletedAt         DateTime?
+
+  // Relations
+  account          Account          @relation(fields: [accountId], references: [id])
+  siteGroup        SiteGroup?       @relation(fields: [siteGroupId], references: [id])
+  opportunitySites OpportunitySite[]
+  quoteLines       QuoteLine[]
+
+  @@unique([meterId])
+  @@index([accountId])
+  @@index([siteGroupId])
+  @@index([contractEndDate])
+}
+
+model Opportunity {
+  id                String    @id @default(uuid())
+  accountId         String
+  stage             String    @default("DISCOVERY") // OpportunityStage
+  expectedCloseDate DateTime?
+  contractDuration  Int?      // months
+  estimatedValue    Float?
+  winLossReason     String?
+  assignedToId      String?
+  createdById       String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  deletedAt         DateTime?
+
+  // Relations
+  account          Account           @relation(fields: [accountId], references: [id])
+  assignedTo       User?             @relation("AssignedOpportunities", fields: [assignedToId], references: [id])
+  opportunitySites OpportunitySite[]
+  quotes           Quote[]
+
+  @@index([accountId])
+  @@index([assignedToId])
+  @@index([stage])
+  @@index([expectedCloseDate])
+}
+
+model OpportunitySite {
+  id            String @id @default(uuid())
+  opportunityId String
+  siteId        String
+
+  // Relations
+  opportunity Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  site        Site        @relation(fields: [siteId], references: [id])
+
+  @@unique([opportunityId, siteId])
+  @@index([opportunityId])
+  @@index([siteId])
+}
+
+model Quote {
+  id               String    @id @default(uuid())
+  opportunityId    String
+  accountId        String
+  version          Int       @default(1)
+  status           String    @default("DRAFT") // QuoteStatus
+  validUntil       DateTime?
+  currency         String    @default("EUR") // ISO 4217
+  paymentTerms     String?   // PaymentTerms
+  billingFrequency String?   // BillingFrequency
+  totalValue       Float?
+  totalMargin      Float?
+  marginPercentage Float?
+  showBreakdown    Boolean   @default(true)
+  createdById      String?
+  approvedById     String?
+  sourceQuoteId    String?
+  approvalComment  String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  deletedAt        DateTime?
+
+  // Relations
+  opportunity  Opportunity @relation(fields: [opportunityId], references: [id])
+  account      Account     @relation("AccountQuotes", fields: [accountId], references: [id])
+  createdBy    User?       @relation("CreatedQuotes", fields: [createdById], references: [id])
+  approvedBy   User?       @relation("ApprovedQuotes", fields: [approvedById], references: [id])
+  sourceQuote  Quote?      @relation("QuoteClone", fields: [sourceQuoteId], references: [id])
+  clonedQuotes Quote[]     @relation("QuoteClone")
+  quoteLines   QuoteLine[]
+  contracts    Contract[]
+  documentUrl  String?     // stored proposal PDF path
+
+  @@index([opportunityId])
+  @@index([accountId])
+  @@index([status])
+  @@index([createdById])
+}
+
+model QuoteLine {
+  id         String @id @default(uuid())
+  quoteId    String
+  siteId     String
+  annualKwh  Float  // frozen at quote creation
+  totalPrice Float?
+  totalCost  Float?
+  margin     Float?
+
+  // Relations
+  quote      Quote               @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  site       Site                @relation(fields: [siteId], references: [id])
+  components QuoteLineComponent[]
+
+  @@unique([quoteId, siteId])
+  @@index([quoteId])
+  @@index([siteId])
+}
+
+model QuoteLineComponent {
+  id              String  @id @default(uuid())
+  quoteLineId     String
+  componentTypeId String
+  value           Float   // rate value
+  unit            String  // ComponentUnit
+  annualAmount    Float?  // calculated annual cost
+  isPassThrough   Boolean @default(false)
+  isOverride      Boolean @default(false) // true if user overrode default/group value
+
+  // Relations
+  quoteLine     QuoteLine          @relation(fields: [quoteLineId], references: [id], onDelete: Cascade)
+  componentType PriceComponentType @relation(fields: [componentTypeId], references: [id])
+
+  @@unique([quoteLineId, componentTypeId])
+  @@index([quoteLineId])
+  @@index([componentTypeId])
+}
+
+model PriceComponentType {
+  id                    String   @id @default(uuid())
+  name                  String
+  category              String   // ComponentCategory
+  defaultUnit           String   // ComponentUnit
+  defaultValue          Float?
+  isPassThrough         Boolean  @default(false)
+  isRequired            Boolean  @default(true)
+  displayOrder          Int      @default(0)
+  isActive              Boolean  @default(true)
+  marginBaseComponentIds String  @default("[]") // JSON-encoded array of component type IDs
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  // Relations
+  quoteLineComponents QuoteLineComponent[]
+
+  @@index([category])
+  @@index([isActive])
+}
+
+model Contract {
+  id          String    @id @default(uuid())
+  quoteId     String
+  accountId   String
+  status      String    @default("DRAFT") // ContractStatus
+  startDate   DateTime?
+  endDate     DateTime?
+  signedDate  DateTime?
+  documentUrl String?
+  createdById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  // Relations
+  quote   Quote   @relation(fields: [quoteId], references: [id])
+  account Account @relation("AccountContracts", fields: [accountId], references: [id])
+
+  @@index([quoteId])
+  @@index([accountId])
+  @@index([status])
+}
+
+model ActivityLog {
+  id         String   @id @default(uuid())
+  entityType String   // "Lead", "Account", "Opportunity", "Quote", "Contract"
+  entityId   String
+  userId     String?
+  type       String   // ActivityType
+  content    String?
+  metadata   String?  // JSON-encoded object
+  createdAt  DateTime @default(now())
+
+  // Relations
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([userId])
+  @@index([createdAt])
+}
+
+model Notification {
+  id         String   @id @default(uuid())
+  userId     String
+  type       String   // NotificationType
+  title      String
+  message    String?
+  entityType String?
+  entityId   String?
+  isRead     Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  // Relations
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, isRead])
+  @@index([createdAt])
+}
